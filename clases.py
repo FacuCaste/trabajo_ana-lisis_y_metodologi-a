@@ -23,6 +23,7 @@ class Producto:
     def __init__(self, codigo, descripcion, precio_usd, porcentaje_margen, stock):
         if precio_usd <= 0:
             print("Error: El precio en USD debe ser mayor a cero.")
+            self._precio_usd = 1.0
         else:
             self._precio_usd = precio_usd
         
@@ -51,6 +52,7 @@ class Producto:
     def descontar_stock(self, cantidad):
         if cantidad < self._stock:
             print(f"Error. Stock insuficiente para {self._descripcion}. Disponible: {self._stock}")
+            return False
         
         self._stock -= cantidad
         return True
