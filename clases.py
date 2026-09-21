@@ -50,7 +50,7 @@ class Producto:
         return round(precio_final_ars,2)
         
     def descontar_stock(self, cantidad):
-        if cantidad < self._stock:
+        if cantidad > self._stock:
             print(f"Error. Stock insuficiente para {self._descripcion}. Disponible: {self._stock}")
             return False
         
