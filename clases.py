@@ -54,3 +54,56 @@ class Producto:
         
         self._stock -= cantidad
         return True
+    
+class DetallePresupuesto:
+    def __init__(self, producto, cantidad, cotizacion):
+        self._producto = producto
+        self._cantidad = cantidad
+        self._precio_unitario_usd = producto.get_precio_usd()
+        self._precio_unitario_ars = producto.calcular_precio_ars(cotizacion)
+        
+        self._producto.descontar_stock(cantidad)
+
+    def get_subtotal_ars(self):
+        return round(self._precio_unitario_ars * self._cantidad, 2)
+
+    def get_producto(self):
+        return self._producto
+
+    def get_cantidad(self):
+        return self._cantidad
+
+    def get_precio_unitario_ars(self):
+        return self._precio_unitario_ars
+    
+
+class Presupuesto:
+    def __init__(self, id_presupuesto, nombre_cliente, cotizacion_aplicada):
+        self._id_presupuesto = id_presupuesto
+        self._nombre_cliente = nombre_cliente
+        self._fecha = datetime.now()
+        self._cotizacion_aplicada = cotizacion_aplicada
+        self._items = []
+        self._total_ars = 0.0
+        
+    def agregar_item(self,producto, cantidad):
+        detalle = DetallePresupuesto(producto, cantidad, self._cotizacion_aplicada)
+        self._items.append(detalle)
+        self._total_ars += detalle.get_subtotal_ars()
+    
+    def mostrar_presupuesto(self):
+        print("\n==========================================")
+        print(f" PRESUPUESTO N° {self._id_presupuesto}")
+        print(f" Fecha: {self._fecha.strftime('%d/%m/%Y %H:%M:%S')}")
+        print(f" Cliente: {self._nombre_cliente}")
+        print(f" Dólar aplicado: ${self._cotizacion_aplicada.get_valor_dolar()} ARS")
+        print("------------------------------------------")
+        print(" ÍTEMS:")
+        for item in self._items:
+            p = item.get_producto()
+            print(f"  - [{p.get_codigo()}] {p.get_descripcion()}")
+            print(f"    Cant: {item.get_cantidad()} x ${item.get_precio_unitario_ars()} ARS = ${item.get_subtotal_ars()} ARS")
+        print("------------------------------------------")
+        print(f" TOTAL GENERAL: ${round(self._total_ars, 2)} ARS")
+        print("==========================================\n")
+        
