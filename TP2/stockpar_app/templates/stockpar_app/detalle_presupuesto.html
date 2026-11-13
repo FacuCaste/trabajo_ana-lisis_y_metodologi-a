@@ -1,0 +1,59 @@
+{% extends 'stockpar_app/base.html' %}
+
+{% block contenido %}
+<div class="card shadow-sm">
+    <div class="card-body p-4">
+        <div class="d-flex justify-content-between align-items-start border-bottom pb-3 mb-4">
+            <div>
+                <h3 class="fw-bold mb-1">PRESUPUESTO #{{ presupuesto.id }}</h3>
+                <p class="text-muted mb-0">Fecha de emisión: {{ presupuesto.fecha|date:"d/m/Y H:i" }}</p>
+            </div>
+            <div class="text-end">
+                <span class="badge bg-secondary fs-6">Cotización: 1 USD = ${{ presupuesto.cotizacion_aplicada.valor_dolar }} ARS</span>
+                <p class="small text-muted mt-1 mb-0">Tipo: {{ presupuesto.cotizacion_aplicada.origen }}</p>
+            </div>
+        </div>
+
+        <div class="mb-4">
+            <h6 class="text-muted text-uppercase small">Cliente</h6>
+            <h5 class="fw-bold">{{ presupuesto.nombre_cliente }}</h5>
+        </div>
+
+        <div class="table-responsive mb-4">
+            <table class="table table-bordered align-middle">
+                <thead class="table-light">
+                    <tr>
+                        <th>Código</th>
+                        <th>Descripción</th>
+                        <th class="text-center">Cantidad</th>
+                        <th class="text-end">Unitario (ARS)</th>
+                        <th class="text-end">Subtotal (ARS)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in presupuesto.items.all %}
+                    <tr>
+                        <td>{{ item.producto.codigo }}</td>
+                        <td>{{ item.producto.descripcion }}</td>
+                        <td class="text-center">{{ item.cantidad }}</td>
+                        <td class="text-end">${{ item.precio_unitario_ars }}</td>
+                        <td class="text-end fw-bold">${{ item.get_subtotal_ars }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+                <tfoot>
+                    <tr class="table-light">
+                        <td colspan="4" class="text-end fw-bold fs-5">TOTAL FINAL:</td>
+                        <td class="text-end fw-bold fs-5 text-success">${{ presupuesto.total_ars }} ARS</td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+
+        <div class="d-flex justify-content-between ocultar-impresion">
+            <a href="{% url 'lista_presupuestos' %}" class="btn btn-outline-secondary">← Volver al historial</a>
+            <button onclick="window.print()" class="btn btn-primary">🖨️ Imprimir / Guardar PDF</button>
+        </div>
+    </div>
+</div>
+{% endblock %}

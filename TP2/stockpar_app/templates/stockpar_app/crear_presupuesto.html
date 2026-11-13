@@ -1,0 +1,125 @@
+{% extends 'stockpar_app/base.html' %}
+
+{% block contenido %}
+<div class="card shadow-sm">
+    <div class="card-header bg-success text-white d-flex justify-content-between align-items-center">
+        <span class="fw-bold">Nuevo Presupuesto</span>
+        <span class="badge bg-light text-dark">Cotización aplicada: ${{ cotizacion.valor_dolar }} ARS ({{ cotizacion.origen }})</span>
+    </div>
+    <div class="card-body">
+        <form method="POST" id="formularioPresupuesto">
+            {% csrf_token %}
+            <div class="row mb-4">
+                <div class="col-md-6">
+                    <label class="form-label fw-bold">Nombre del Cliente / Empresa</label>
+                    <input type="text" name="nombre_cliente" class="form-control" placeholder="Ej: Constructora del Sur S.A." required>
+                </div>
+            </div>
+
+            <h6 class="fw-bold mb-3">Ítems del Presupuesto</h6>
+            <div class="table-responsive">
+                <table class="table table-bordered align-middle" id="tablaArticulos">
+                    <thead class="table-light">
+                        <tr>
+                            <th style="width: 45%;">Producto (Stock disponible)</th>
+                            <th style="width: 15%;" class="text-end">Unitario (ARS)</th>
+                            <th style="width: 15%;">Cantidad</th>
+                            <th style="width: 15%;" class="text-end">Subtotal (ARS)</th>
+                            <th style="width: 10%;" class="text-center">Quitar</th>
+                        </tr>
+                    </thead>
+                    <tbody id="cuerpoTabla">
+                        <tr class="fila-articulo">
+                            <td>
+                                <select name="producto_id[]" class="form-select selector-producto" required>
+                                    <option value="" data-precio="0">-- Seleccionar producto --</option>
+                                    {% for producto in productos %}
+                                        <option value="{{ producto.id }}" data-precio="{{ producto.precio_usd }}" data-margen="{{ producto.porcentaje_margen }}" data-stock="{{ producto.stock }}">
+                                            [{{ producto.codigo }}] {{ producto.descripcion }} (Disp: {{ producto.stock }})
+                                        </option>
+                                    {% endfor %}
+                                </select>
+                            </td>
+                            <td class="text-end precio-unitario">$0.00</td>
+                            <td>
+                                <input type="number" name="cantidad[]" class="form-control campo-cantidad" min="1" value="1" required>
+                            </td>
+                            <td class="text-end fw-bold subtotal-articulo">$0.00</td>
+                            <td class="text-center">
+                                <button type="button" class="btn btn-outline-danger btn-sm boton-eliminar">X</button>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="d-flex justify-content-between align-items-center mt-3">
+                <button type="button" class="btn btn-outline-primary" id="botonAgregarFila">+ Agregar otro producto</button>
+                <div class="text-end">
+                    <span class="text-muted me-2">TOTAL ESTIMADO:</span>
+                    <span class="fs-3 fw-bold text-success" id="totalGeneral">$0.00 ARS</span>
+                </div>
+            </div>
+
+            <hr class="my-4">
+            <div class="d-flex justify-content-end gap-2">
+                <a href="{% url 'index' %}" class="btn btn-secondary">Cancelar</a>
+                <button type="submit" class="btn btn-success btn-lg">Guardar y Descontar Stock</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts_extra %}
+<script>
+    const cotizacion = parseFloat("{{ cotizacion.valor_dolar }}".replace(',', '.'));
+
+    function recalcularTodo() {
+        let total = 0;
+        document.querySelectorAll('.fila-articulo').forEach(fila => {
+            const selector = fila.querySelector('.selector-producto');
+            const opcion = selector.options[selector.selectedIndex];
+            const campoCantidad = fila.querySelector('.campo-cantidad');
+            
+            const precioUsd = parseFloat((opcion.dataset.precio || '0').replace(',', '.'));
+            const margen = parseFloat((opcion.dataset.margen || '0').replace(',', '.'));
+            const stock = parseInt(opcion.dataset.stock || '0');
+            
+            if (stock > 0) campoCantidad.max = stock;
+
+            const cantidad = parseInt(campoCantidad.value) || 0;
+            const unitarioArs = precioUsd * (1 + margen / 100) * cotizacion;
+            const subtotal = unitarioArs * cantidad;
+
+            fila.querySelector('.precio-unitario').textContent = '$' + unitarioArs.toFixed(2);
+            fila.querySelector('.subtotal-articulo').textContent = '$' + subtotal.toFixed(2);
+            total += subtotal;
+        });
+        document.getElementById('totalGeneral').textContent = '$' + total.toFixed(2) + ' ARS';
+    }
+
+    document.getElementById('cuerpoTabla').addEventListener('change', recalcularTodo);
+    document.getElementById('cuerpoTabla').addEventListener('input', recalcularTodo);
+
+    document.getElementById('botonAgregarFila').addEventListener('click', () => {
+        const cuerpo = document.getElementById('cuerpoTabla');
+        const nuevaFila = cuerpo.querySelector('.fila-articulo').cloneNode(true);
+        nuevaFila.querySelector('.selector-producto').value = '';
+        nuevaFila.querySelector('.campo-cantidad').value = 1;
+        nuevaFila.querySelector('.precio-unitario').textContent = '$0.00';
+        nuevaFila.querySelector('.subtotal-articulo').textContent = '$0.00';
+        cuerpo.appendChild(nuevaFila);
+    });
+
+    document.getElementById('cuerpoTabla').addEventListener('click', (evento) => {
+        if (evento.target.classList.contains('boton-eliminar')) {
+            const filas = document.querySelectorAll('.fila-articulo');
+            if (filas.length > 1) {
+                evento.target.closest('.fila-articulo').remove();
+                recalcularTodo();
+            }
+        }
+    });
+</script>
+{% endblock %}

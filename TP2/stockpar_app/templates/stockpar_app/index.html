@@ -1,0 +1,96 @@
+{% extends 'stockpar_app/base.html' %}
+
+{% block contenido %}
+<div class="row g-4">
+    <!-- Tarjeta de Cotización del Dólar -->
+    <div class="col-md-4">
+        <div class="card shadow-sm border-primary">
+            <div class="card-header bg-primary text-white fw-bold">
+                Cotización Dólar Actual
+            </div>
+            <div class="card-body">
+                {% if cotizacion %}
+                    <h2 class="display-6 fw-bold text-success">${{ cotizacion.valor_dolar }} <small class="fs-6 text-muted">ARS</small></h2>
+                    <p class="mb-1"><strong>Origen:</strong> {{ cotizacion.origen }}</p>
+                    <p class="text-muted small">Actualizado: {{ cotizacion.fecha_hora|date:"d/m/Y H:i" }}</p>
+                {% else %}
+                    <div class="alert alert-warning">No hay cotización cargada aún.</div>
+                {% endif %}
+
+                <hr>
+                <form method="POST" action="{% url 'actualizar_cotizacion' %}">
+                    {% csrf_token %}
+                    <div class="mb-2">
+                        <label class="form-label small fw-bold">Nuevo Valor (ARS)</label>
+                        <input type="number" step="0.01" name="valor_dolar" class="form-control" placeholder="Ej: 1150.50" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Tipo / Origen</label>
+                        <select name="origen" class="form-select">
+                            <option value="Oficial">Oficial</option>
+                            <option value="Blue">Blue</option>
+                            <option value="MEP">MEP</option>
+                            <option value="Mayorista">Mayorista</option>
+                        </select>
+                    </div>
+                    <button type="submit" class="btn btn-primary w-100">Actualizar Cotización</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tabla de Productos y Precios Calculados -->
+    <div class="col-md-8">
+        <div class="card shadow-sm">
+            <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                <span class="fw-bold">Catálogo de Productos y Precios de Venta</span>
+                <a href="{% url 'crear_presupuesto' %}" class="btn btn-success btn-sm">+ Armar Presupuesto</a>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0 align-middle">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Código</th>
+                                <th>Descripción</th>
+                                <th class="text-end">Costo (USD)</th>
+                                <th class="text-center">Margen</th>
+                                <th class="text-end">Venta (ARS)</th>
+                                <th class="text-center">Stock</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for item in productos_con_precio %}
+                            <tr>
+                                <td><span class="badge bg-secondary">{{ item.producto.codigo }}</span></td>
+                                <td>{{ item.producto.descripcion }}</td>
+                                <td class="text-end">U$D {{ item.producto.precio_usd }}</td>
+                                <td class="text-center">{{ item.producto.porcentaje_margen }}%</td>
+                                <td class="text-end fw-bold text-primary">
+                                    {% if cotizacion %}${{ item.precio_ars }}{% else %}-{% endif %}
+                                </td>
+                                <td class="text-center">
+                                    {% if item.producto.stock > 5 %}
+                                        <span class="badge bg-success">{{ item.producto.stock }}</span>
+                                    {% elif item.producto.stock > 0 %}
+                                        <span class="badge bg-warning text-dark">{{ item.producto.stock }}</span>
+                                    {% else %}
+                                        <span class="badge bg-danger">Sin stock</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="6" class="text-center py-4 text-muted">
+                                    No hay productos cargados. Agregalos desde el <a href="/admin/">Panel Admin</a>.
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
