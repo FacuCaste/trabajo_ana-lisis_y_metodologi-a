@@ -1,108 +1,172 @@
-from decimal import Decimal
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib import messages
 from django.db import transaction
-from .models import Cotizacion, Producto, Presupuesto, DetallePresupuesto
+from django.db.models import Q
+from decimal import Decimal
+from .models import Producto, Cotizacion, Presupuesto, DetallePresupuesto
 
 def index(request):
-    cotizacion_actual = Cotizacion.objects.order_by('-fecha_hora').first()
-    productos = Producto.objects.all().order_by('descripcion')
-    
-    # Calculamos el precio en ARS para cada producto si existe una cotización
+    cotizacion = Cotizacion.objects.order_by('-fecha_hora').first()
+    busqueda = request.GET.get('q', '').strip()
+
+    productos = Producto.objects.all().order_by('codigo')
+    if busqueda:
+        productos = productos.filter(
+            Q(codigo__icontains=busqueda) | Q(descripcion__icontains=busqueda)
+        )
+
     productos_con_precio = []
-    for p in productos:
-        precio_ars = p.calcular_precio_ars(cotizacion_actual.valor_dolar) if cotizacion_actual else 0
+    for producto in productos:
+        precio_ars = None
+        if cotizacion:
+            precio_ars = round(
+                producto.precio_usd * (1 + producto.porcentaje_margen / Decimal('100')) * cotizacion.valor_dolar,
+                2
+            )
         productos_con_precio.append({
-            'producto': p,
+            'producto': producto,
             'precio_ars': precio_ars
         })
 
-    context = {
-        'cotizacion': cotizacion_actual,
+    return render(request, 'stockpar_app/index.html', {
+        'cotizacion': cotizacion,
         'productos_con_precio': productos_con_precio,
-    }
-    return render(request, 'stockpar_app/index.html', context)
+        'busqueda': busqueda,
+    })
 
 def actualizar_cotizacion(request):
     if request.method == 'POST':
-        valor = request.POST.get('valor_dolar')
+        valor = Decimal(request.POST.get('valor_dolar', '0'))
         origen = request.POST.get('origen', 'Oficial')
-        if valor:
-            Cotizacion.objects.create(valor_dolar=Decimal(valor), origen=origen)
-            messages.success(request, f'Cotización actualizada a ${valor} ARS ({origen}).')
+        usuario_actual = request.user if request.user.is_authenticated else None
+
+        if valor > 0:
+            Cotizacion.objects.create(
+                valor_dolar=valor,
+                origen=origen,
+                usuario=usuario_actual
+            )
+            messages.success(request, f"Cotización actualizada a ${valor} ARS.")
+        else:
+            messages.error(request, "La cotización debe ser mayor a cero.")
     return redirect('index')
 
-def lista_presupuestos(request):
-    presupuestos = Presupuesto.objects.all().order_by('-fecha')
-    return render(request, 'stockpar_app/lista_presupuestos.html', {'presupuestos': presupuestos})
+def crear_producto(request):
+    if request.method == 'POST':
+        codigo = request.POST.get('codigo', '').strip().upper()
+        descripcion = request.POST.get('descripcion', '').strip()
+        precio_usd = Decimal(request.POST.get('precio_usd', '0'))
+        porcentaje_margen = Decimal(request.POST.get('porcentaje_margen', '0'))
+        stock = int(request.POST.get('stock', '0'))
+
+        if precio_usd <= 0:
+            messages.error(request, "El precio base en USD debe ser mayor a cero.")
+        elif Producto.objects.filter(codigo=codigo).exists():
+            messages.error(request, f"Ya existe un repuesto con el código {codigo}.")
+        else:
+            Producto.objects.create(
+                codigo=codigo,
+                descripcion=descripcion,
+                precio_usd=precio_usd,
+                porcentaje_margen=porcentaje_margen,
+                stock=stock
+            )
+            messages.success(request, f"Repuesto [{codigo}] agregado correctamente.")
+    return redirect('index')
+
+def editar_producto(request, producto_id):
+    producto = get_object_or_404(Producto, id=producto_id)
+    if request.method == 'POST':
+        precio_usd = Decimal(request.POST.get('precio_usd', '0'))
+        porcentaje_margen = Decimal(request.POST.get('porcentaje_margen', '0'))
+        stock = int(request.POST.get('stock', '0'))
+        descripcion = request.POST.get('descripcion', '').strip()
+
+        if precio_usd <= 0:
+            messages.error(request, "El precio base en USD debe ser mayor a cero.")
+        else:
+            producto.descripcion = descripcion
+            producto.precio_usd = precio_usd
+            producto.porcentaje_margen = porcentaje_margen
+            producto.stock = stock
+            producto.save()
+            messages.success(request, f"Repuesto [{producto.codigo}] actualizado.")
+    return redirect('index')
+
+def eliminar_producto(request, producto_id):
+    producto = get_object_or_404(Producto, id=producto_id)
+    if request.method == 'POST':
+        codigo = producto.codigo
+        producto.delete()
+        messages.warning(request, f"Repuesto [{codigo}] eliminado del catálogo.")
+    return redirect('index')
 
 def crear_presupuesto(request):
-    cotizacion_actual = Cotizacion.objects.order_by('-fecha_hora').first()
-    if not cotizacion_actual:
-        messages.error(request, 'Primero debés cargar una cotización del dólar antes de crear presupuestos.')
+    cotizacion = Cotizacion.objects.order_by('-fecha_hora').first()
+    if not cotizacion:
+        messages.warning(request, "Primero debés cargar una cotización del dólar.")
         return redirect('index')
 
     productos = Producto.objects.filter(stock__gt=0).order_by('descripcion')
 
     if request.method == 'POST':
-        nombre_cliente = request.POST.get('nombre_cliente')
+        nombre_cliente = request.POST.get('nombre_cliente', '').strip()
         productos_ids = request.POST.getlist('producto_id[]')
         cantidades = request.POST.getlist('cantidad[]')
-
-        if not nombre_cliente or not productos_ids:
-            messages.error(request, 'Completá el nombre del cliente y agregá al menos un producto.')
-            return redirect('crear_presupuesto')
 
         try:
             with transaction.atomic():
                 presupuesto = Presupuesto.objects.create(
                     nombre_cliente=nombre_cliente,
-                    cotizacion_aplicada=cotizacion_actual,
-                    total_ars=0
+                    cotizacion_aplicada=cotizacion,
+                    total_ars=Decimal('0.00')
                 )
-                total_general_ars = Decimal('0.00')
+                total_general = Decimal('0.00')
 
                 for prod_id, cant_str in zip(productos_ids, cantidades):
-                    if not prod_id or not cant_str:
+                    if not prod_id:
                         continue
                     cantidad = int(cant_str)
-                    if cantidad <= 0:
-                        continue
-
                     producto = Producto.objects.select_for_update().get(id=prod_id)
-                    
-                    # Validamos y descontamos stock usando tu método del modelo
-                    if not producto.descontar_stock(cantidad):
-                        raise ValueError(f'Stock insuficiente para {producto.descripcion} (Disponible: {producto.stock}).')
 
-                    precio_unit_ars = Decimal(str(producto.calcular_precio_ars(cotizacion_actual.valor_dolar)))
-                    
-                    detalle = DetallePresupuesto.objects.create(
+                    if cantidad > producto.stock:
+                        raise ValueError(f"Stock insuficiente para {producto.descripcion}.")
+
+                    precio_unitario = round(
+                        producto.precio_usd * (1 + producto.porcentaje_margen / Decimal('100')) * cotizacion.valor_dolar,
+                        2
+                    )
+                    DetallePresupuesto.objects.create(
                         presupuesto=presupuesto,
                         producto=producto,
                         cantidad=cantidad,
-                        precio_unitario_usd=producto.precio_usd,
-                        precio_unitario_ars=precio_unit_ars
+                        precio_unitario_ars=precio_unitario
                     )
-                    total_general_ars += Decimal(str(detalle.get_subtotal_ars()))
+                    producto.stock -= cantidad
+                    producto.save()
+                    total_general += precio_unitario * cantidad
 
-                if total_general_ars == 0:
-                    raise ValueError('No se agregaron ítems válidos al presupuesto.')
-
-                presupuesto.total_ars = total_general_ars
+                presupuesto.total_ars = round(total_general, 2)
                 presupuesto.save()
-                messages.success(request, f'Presupuesto #{presupuesto.id} generado correctamente.')
+                messages.success(request, f"Presupuesto #{presupuesto.id} guardado y stock descontado.")
                 return redirect('detalle_presupuesto', presupuesto_id=presupuesto.id)
 
-        except ValueError as e:
-            messages.error(request, str(e))
-            return redirect('crear_presupuesto')
+        except ValueError as error:
+            messages.error(request, str(error))
 
     return render(request, 'stockpar_app/crear_presupuesto.html', {
-        'cotizacion': cotizacion_actual,
+        'cotizacion': cotizacion,
         'productos': productos
+    })
+
+def lista_presupuestos(request):
+    presupuestos = Presupuesto.objects.all().order_by('-fecha')
+    return render(request, 'stockpar_app/lista_presupuestos.html', {
+        'presupuestos': presupuestos
     })
 
 def detalle_presupuesto(request, presupuesto_id):
     presupuesto = get_object_or_404(Presupuesto, id=presupuesto_id)
-    return render(request, 'stockpar_app/detalle_presupuesto.html', {'presupuesto': presupuesto})
+    return render(request, 'stockpar_app/detalle_presupuesto.html', {
+        'presupuesto': presupuesto
+    })

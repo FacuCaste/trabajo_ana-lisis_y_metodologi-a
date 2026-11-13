@@ -34,12 +34,11 @@
                         <a class="nav-link" href="{% url 'lista_presupuestos' %}">Historial Presupuestos</a>
                     </li>
                 </ul>
-                <a href="/admin/" class="btn btn-outline-light btn-sm" target="_blank">Panel Admin</a>
+        
             </div>
         </div>
     </nav>
 
-    <!-- Contenedor principal -->
     <div class="container">
         {% if messages %}
             {% for mensaje in messages %}
