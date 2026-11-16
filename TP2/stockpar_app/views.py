@@ -1,9 +1,63 @@
-from django.shortcuts import render, redirect, get_object_or_404
-from django.contrib import messages
-from django.db import transaction
-from django.db.models import Q
 from decimal import Decimal
-from .models import Producto, Cotizacion, Presupuesto, DetallePresupuesto
+
+from django.contrib import messages
+from django.core.exceptions import ValidationError
+from django.db import transaction
+from django.db.models import ProtectedError, Q
+from django.shortcuts import get_object_or_404, redirect, render
+
+from .models import Cotizacion, DetallePresupuesto, Presupuesto, Producto
+
+
+# ---------------------------------------------------------------------------
+# Funciones auxiliares
+# ---------------------------------------------------------------------------
+
+def _texto_errores(error):
+    """Convierte un ValidationError de Django en un texto para mostrar al usuario."""
+    return " ".join(error.messages)
+
+
+def _validar_producto(producto):
+    """Aplica las reglas del modelo (full_clean) y que el margen no sea negativo.
+
+    Lanza ValidationError si algo está mal. Si todo está bien, los campos del
+    producto quedan convertidos a sus tipos correctos (Decimal, int).
+    """
+    producto.full_clean()
+    if producto.porcentaje_margen < 0:
+        raise ValidationError("El margen no puede ser negativo.")
+
+
+def _leer_items(post):
+    """Lee los ítems del formulario de presupuesto: devuelve [(producto_id, cantidad)].
+
+    Lanza ValueError con un mensaje legible si hay algún dato inválido.
+    """
+    items = []
+    for prod_id, cant_str in zip(post.getlist('producto_id[]'), post.getlist('cantidad[]')):
+        if not prod_id:
+            continue
+        try:
+            prod_id = int(prod_id)
+        except ValueError:
+            raise ValueError("Producto inválido.") from None
+        try:
+            cantidad = int(cant_str)
+        except ValueError:
+            raise ValueError("La cantidad debe ser un número entero.") from None
+        if cantidad <= 0:
+            raise ValueError("La cantidad debe ser mayor a cero.")
+        items.append((prod_id, cantidad))
+
+    if not items:
+        raise ValueError("Agregá al menos un producto al presupuesto.")
+    return items
+
+
+# ---------------------------------------------------------------------------
+# Catálogo y cotización
+# ---------------------------------------------------------------------------
 
 def index(request):
     cotizacion = Cotizacion.objects.order_by('-fecha_hora').first()
@@ -15,18 +69,13 @@ def index(request):
             Q(codigo__icontains=busqueda) | Q(descripcion__icontains=busqueda)
         )
 
-    productos_con_precio = []
-    for producto in productos:
-        precio_ars = None
-        if cotizacion:
-            precio_ars = round(
-                producto.precio_usd * (1 + producto.porcentaje_margen / Decimal('100')) * cotizacion.valor_dolar,
-                2
-            )
-        productos_con_precio.append({
+    productos_con_precio = [
+        {
             'producto': producto,
-            'precio_ars': precio_ars
-        })
+            'precio_ars': producto.calcular_precio_ars(cotizacion) if cotizacion else None,
+        }
+        for producto in productos
+    ]
 
     return render(request, 'stockpar_app/index.html', {
         'cotizacion': cotizacion,
@@ -34,72 +83,89 @@ def index(request):
         'busqueda': busqueda,
     })
 
+
 def actualizar_cotizacion(request):
     if request.method == 'POST':
-        valor = Decimal(request.POST.get('valor_dolar', '0'))
-        origen = request.POST.get('origen', 'Oficial')
-        usuario_actual = request.user if request.user.is_authenticated else None
-
-        if valor > 0:
-            Cotizacion.objects.create(
-                valor_dolar=valor,
-                origen=origen,
-                usuario=usuario_actual
-            )
-            messages.success(request, f"Cotización actualizada a ${valor} ARS.")
+        nueva = Cotizacion(
+            valor_dolar=request.POST.get('valor_dolar', ''),
+            origen=request.POST.get('origen', 'Oficial'),
+            usuario=request.user if request.user.is_authenticated else None,
+        )
+        try:
+            nueva.full_clean()
+            if nueva.valor_dolar <= 0:
+                raise ValidationError("La cotización debe ser mayor a cero.")
+        except ValidationError as error:
+            messages.error(request, _texto_errores(error))
         else:
-            messages.error(request, "La cotización debe ser mayor a cero.")
+            nueva.save()
+            messages.success(request, f"Cotización actualizada a ${nueva.valor_dolar} ARS.")
     return redirect('index')
+
 
 def crear_producto(request):
     if request.method == 'POST':
         codigo = request.POST.get('codigo', '').strip().upper()
-        descripcion = request.POST.get('descripcion', '').strip()
-        precio_usd = Decimal(request.POST.get('precio_usd', '0'))
-        porcentaje_margen = Decimal(request.POST.get('porcentaje_margen', '0'))
-        stock = int(request.POST.get('stock', '0'))
+        producto = Producto(
+            codigo=codigo,
+            descripcion=request.POST.get('descripcion', '').strip(),
+            precio_usd=request.POST.get('precio_usd', ''),
+            porcentaje_margen=request.POST.get('porcentaje_margen', '0'),
+            stock=request.POST.get('stock', '0'),
+        )
 
-        if precio_usd <= 0:
-            messages.error(request, "El precio base en USD debe ser mayor a cero.")
-        elif Producto.objects.filter(codigo=codigo).exists():
+        if Producto.objects.filter(codigo=codigo).exists():
             messages.error(request, f"Ya existe un repuesto con el código {codigo}.")
         else:
-            Producto.objects.create(
-                codigo=codigo,
-                descripcion=descripcion,
-                precio_usd=precio_usd,
-                porcentaje_margen=porcentaje_margen,
-                stock=stock
-            )
-            messages.success(request, f"Repuesto [{codigo}] agregado correctamente.")
+            try:
+                _validar_producto(producto)
+            except ValidationError as error:
+                messages.error(request, _texto_errores(error))
+            else:
+                producto.save()
+                messages.success(request, f"Repuesto [{codigo}] agregado correctamente.")
     return redirect('index')
+
 
 def editar_producto(request, producto_id):
     producto = get_object_or_404(Producto, id=producto_id)
     if request.method == 'POST':
-        precio_usd = Decimal(request.POST.get('precio_usd', '0'))
-        porcentaje_margen = Decimal(request.POST.get('porcentaje_margen', '0'))
-        stock = int(request.POST.get('stock', '0'))
-        descripcion = request.POST.get('descripcion', '').strip()
+        producto.descripcion = request.POST.get('descripcion', '').strip()
+        producto.precio_usd = request.POST.get('precio_usd', '')
+        producto.porcentaje_margen = request.POST.get('porcentaje_margen', '0')
+        producto.stock = request.POST.get('stock', '0')
 
-        if precio_usd <= 0:
-            messages.error(request, "El precio base en USD debe ser mayor a cero.")
+        try:
+            _validar_producto(producto)
+        except ValidationError as error:
+            messages.error(request, _texto_errores(error))
         else:
-            producto.descripcion = descripcion
-            producto.precio_usd = precio_usd
-            producto.porcentaje_margen = porcentaje_margen
-            producto.stock = stock
             producto.save()
             messages.success(request, f"Repuesto [{producto.codigo}] actualizado.")
     return redirect('index')
+
 
 def eliminar_producto(request, producto_id):
     producto = get_object_or_404(Producto, id=producto_id)
     if request.method == 'POST':
         codigo = producto.codigo
-        producto.delete()
-        messages.warning(request, f"Repuesto [{codigo}] eliminado del catálogo.")
+        try:
+            producto.delete()
+        except ProtectedError:
+            # DetallePresupuesto.producto usa on_delete=PROTECT: un repuesto que
+            # ya figura en algún presupuesto no se puede borrar.
+            messages.error(
+                request,
+                f"No se puede eliminar [{codigo}] porque figura en presupuestos existentes."
+            )
+        else:
+            messages.warning(request, f"Repuesto [{codigo}] eliminado del catálogo.")
     return redirect('index')
+
+
+# ---------------------------------------------------------------------------
+# Presupuestos
+# ---------------------------------------------------------------------------
 
 def crear_presupuesto(request):
     cotizacion = Cotizacion.objects.order_by('-fecha_hora').first()
@@ -111,10 +177,15 @@ def crear_presupuesto(request):
 
     if request.method == 'POST':
         nombre_cliente = request.POST.get('nombre_cliente', '').strip()
-        productos_ids = request.POST.getlist('producto_id[]')
-        cantidades = request.POST.getlist('cantidad[]')
 
         try:
+            if not nombre_cliente:
+                raise ValueError("Ingresá el nombre del cliente.")
+            if len(nombre_cliente) > 150:
+                raise ValueError("El nombre del cliente no puede superar los 150 caracteres.")
+            items = _leer_items(request.POST)
+
+            # Todo o nada: si algo falla, no se guarda el presupuesto ni se toca el stock.
             with transaction.atomic():
                 presupuesto = Presupuesto.objects.create(
                     nombre_cliente=nombre_cliente,
@@ -123,19 +194,17 @@ def crear_presupuesto(request):
                 )
                 total_general = Decimal('0.00')
 
-                for prod_id, cant_str in zip(productos_ids, cantidades):
-                    if not prod_id:
-                        continue
-                    cantidad = int(cant_str)
-                    producto = Producto.objects.select_for_update().get(id=prod_id)
-
+                for producto_id, cantidad in items:
+                    producto = Producto.objects.select_for_update().filter(id=producto_id).first()
+                    if producto is None:
+                        raise ValueError("Uno de los productos seleccionados ya no existe.")
                     if cantidad > producto.stock:
-                        raise ValueError(f"Stock insuficiente para {producto.descripcion}.")
+                        raise ValueError(
+                            f"Stock insuficiente para {producto.descripcion} "
+                            f"(disponible: {producto.stock})."
+                        )
 
-                    precio_unitario = round(
-                        producto.precio_usd * (1 + producto.porcentaje_margen / Decimal('100')) * cotizacion.valor_dolar,
-                        2
-                    )
+                    precio_unitario = producto.calcular_precio_ars(cotizacion)
                     DetallePresupuesto.objects.create(
                         presupuesto=presupuesto,
                         producto=producto,
@@ -159,11 +228,13 @@ def crear_presupuesto(request):
         'productos': productos
     })
 
+
 def lista_presupuestos(request):
     presupuestos = Presupuesto.objects.all().order_by('-fecha')
     return render(request, 'stockpar_app/lista_presupuestos.html', {
         'presupuestos': presupuestos
     })
+
 
 def detalle_presupuesto(request, presupuesto_id):
     presupuesto = get_object_or_404(Presupuesto, id=presupuesto_id)
