@@ -15,13 +15,14 @@ class Producto(models.Model):
     stock = models.PositiveIntegerField(default=0)
 
     def __str__(self):
-            def calcular_precio_ars(self, cotizacion):
+        return f"[{self.codigo}] {self.descripcion}"
+
+    def calcular_precio_ars(self, cotizacion):
         """Precio de venta en ARS: precio base en USD + margen, convertido con la cotización dada."""
         return round(
             self.precio_usd * (1 + self.porcentaje_margen / Decimal('100')) * cotizacion.valor_dolar,
             2
         )
-        return f"[{self.codigo}] {self.descripcion}"
 
 class Cotizacion(models.Model):
     valor_dolar = models.DecimalField(max_digits=10, decimal_places=2)
